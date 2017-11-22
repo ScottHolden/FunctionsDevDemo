@@ -1,0 +1,118 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10,
+      "defaultValue": "dev",
+      "metadata": {
+        "description": "A name to use when prefixing resources"
+      }
+    }
+  },
+  "variables": {
+    "baseName": "[concat(parameters('name'), uniqueString(resourceGroup().id, parameters('name')))]",
+
+    "cosmosName": "[variables('baseName')]",
+    "cosmosDatabaseName": "FunctionsDevDemo",
+
+    "functionName": "[variables('baseName')]",
+
+    "functionStorageName": "[take(variables('baseName'), 24)]",
+    "functionStorageId": "[resourceId('Microsoft.Storage/storageAccounts', variables('functionStorageName'))]",
+    "functionStorageConnectionPrefix": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('functionStorageName'), ';AccountKey=')]"
+  },
+  "resources": [
+    {
+      "apiVersion": "2015-04-08",
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+
+      "name": "[variables('cosmosName')]",
+      "location": "[resourceGroup().location]",
+
+      "kind": "MongoDB",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "name": "[variables('cosmosName')]"
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Storage/storageAccounts",
+
+      "name": "[variables('functionStorageName')]",
+      "location": "[resourceGroup().location]",
+
+      "properties": {
+        "accountType": "Standard_LRS"
+      }
+    },
+    {
+      "apiVersion": "2015-04-01",
+      "type": "Microsoft.Web/serverfarms",
+
+      "name": "[variables('functionName')]",
+      "location": "[resourceGroup().location]",
+
+      "properties": {
+        "name": "[variables('functionName')]",
+        "computeMode": "Dynamic",
+        "sku": "Dynamic"
+      }
+    },
+    {
+      "apiVersion": "2015-08-01",
+      "type": "Microsoft.Web/sites",
+
+      "name": "[variables('functionName')]",
+      "location": "[resourceGroup().location]",
+
+      "dependsOn": [
+        "[concat('Microsoft.Web/serverfarms/', variables('functionName'))]"
+      ],
+
+      "kind": "functionapp",
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('functionName'))]"
+      },
+
+      "resources": [
+        {
+          "type": "Microsoft.Web/sites/config",
+          "apiVersion": "2015-08-01",
+          "name": "[concat(variables('functionName'), '/appsettings')]",
+          "dependsOn": [
+            "[variables('functionName')]",
+            "[concat('Microsoft.DocumentDB/databaseAccounts/', variables('cosmosName'))]"
+          ],
+          "properties": {
+            "AzureWebJobsDashboard": "[concat(variables('functionStorageConnectionPrefix'), listKeys(variables('functionStorageId'), '2015-05-01-preview').key1)]",
+            "AzureWebJobsStorage": "[concat(variables('functionStorageConnectionPrefix'), listKeys(variables('functionStorageId'), '2015-05-01-preview').key1)]",
+            "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING": "[concat(variables('functionStorageConnectionPrefix'), listKeys(variables('functionStorageId'), '2015-05-01-preview').key1)]",
+            "WEBSITE_CONTENTSHARE": "[toLower(variables('functionName'))]",
+            "FUNCTIONS_EXTENSION_VERSION": "~1",
+            "FUNCTION_APP_EDIT_MODE": "readonly",
+            "MongoDataStorage.DatabaseName": "[variables('cosmosDatabaseName')]",
+            "MongoDataStorage.ConnectionString": "[first(listConnectionStrings(resourceId('Microsoft.DocumentDb/databaseAccounts', variables('cosmosName')), '2015-04-08').connectionStrings).connectionString]"
+          }
+        }
+      ]
+    }
+  ],
+  "outputs": {
+    "pingUrl": {
+      "type": "string",
+      "value": "[concat('https://', variables('functionName'), '.azurewebsites.net/admin/host/ping')]"
+    },
+    "publishUrl": {
+      "type": "string",
+      "value": "[concat('https://', variables('functionName'), '.scm.azurewebsites.net/api/zipdeploy')]"
+    },
+    "publishAuthenticationHeader": {
+      "type": "string",
+      "value": "[concat('Basic ', base64(concat(list(resourceId('Microsoft.Web/sites/config', variables('functionName'), 'publishingcredentials'), '2015-08-01').properties.publishingUserName, ':', list(resourceId('Microsoft.Web/sites/config', variables('functionName'), 'publishingcredentials'), '2015-08-01').properties.publishingPassword)))]"
+    }
+  }
+}
